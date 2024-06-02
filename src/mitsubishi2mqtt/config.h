@@ -16,7 +16,7 @@
 
 //#define MY_LANGUAGE fr-FR // define your language
 
-const PROGMEM char* m2mqtt_version = "2022.01.10 - magi's edition";
+const PROGMEM char* m2mqtt_version = "Mitsubishi2MQTT - magi's edition (2024.5.1)";
 
 //Define global variables for files
 #ifdef ESP32
@@ -25,18 +25,15 @@ const PROGMEM char* mqtt_conf = "/mqtt.json";
 const PROGMEM char* unit_conf = "/unit.json";
 const PROGMEM char* console_file = "/console.log";
 const PROGMEM char* others_conf = "/others.json";
-// pinouts
-const PROGMEM  uint8_t blueLedPin = 2;            // The ESP32 has an internal blue LED at D2 (GPIO 02)
+const PROGMEM char* energy_file = "/energy.json";
 #else
 const PROGMEM char* wifi_conf = "wifi.json";
 const PROGMEM char* mqtt_conf = "mqtt.json";
 const PROGMEM char* unit_conf = "unit.json";
 const PROGMEM char* console_file = "console.log";
 const PROGMEM char* others_conf = "others.json";
-// pinouts
-const PROGMEM  uint8_t blueLedPin = 2; // Onboard LED = digital pin 2 
+const PROGMEM char* energy_file = "energy.json";
 #endif
-const PROGMEM  uint8_t redLedPin = 0;
 
 // Define global variables for network
 const PROGMEM char* hostnamePrefix = "HVAC_";
@@ -49,7 +46,14 @@ String ap_pwd;
 String ota_pwd;
 
 //CN105Kit Product version
-const PROGMEM char* hardware_version = "CN105Kit V2 (WiFiSerial)";
+#ifdef __ESP32S3__
+const PROGMEM char* hardware_version = "WiFiKit Serial 1.2";
+#elif defined(__ESP07__) 
+const PROGMEM char* hardware_version = "CN105Kit V2 (ESP07)";
+#elif defined(__ESP12E__) 
+const PROGMEM char* hardware_version = "CN105Kit V1/V2.1 (ESP12E)";
+
+#endif
 
 // Define global variables for MQTT
 String mqtt_fn;
@@ -65,6 +69,9 @@ const PROGMEM char* mqtt_payload_unavailable = "offline";
 //icons
 const PROGMEM char* HA_AC_icon = "mdi:air-conditioner";
 const PROGMEM char* HA_thermometer_icon = "mdi:thermometer";
+const PROGMEM char* HA_lightning_bolt = "mdi:lightning-bolt-circle";
+const PROGMEM char* HA_counter = "mdi:counter";
+const PROGMEM char* HA_restart = "mdi:restart";
 const PROGMEM char* HA_vane_vertical_icon = "mdi:arrow-up-down";
 const PROGMEM char* HA_vane_horizontal_icon = "mdi:arrow-left-right";
 
@@ -87,8 +94,12 @@ String ha_debug_topic;
 String ha_debug_set_topic;
 String ha_climate_config_topic;
 String ha_sensor_room_temp_config_topic;
+String ha_sensor_power_config_topic;
+String ha_sensor_energy_config_topic;
 String ha_select_vane_vertical_config_topic;
 String ha_select_vane_horizontal_config_topic;
+String ha_button_reset_energy_config_topic;
+String ha_button_energy_set_topic;
 String ha_discovery_topic;
 String ha_custom_packet;
 String ha_availability_topic;
@@ -117,8 +128,40 @@ uint8_t max_temp                    = 31; // Maximum temperature, check value fr
 String temp_step                    = "1"; // Temperature setting step, check value from heatpump remote control
 uint32_t update_int                 = SEND_ROOM_TEMP_INTERVAL_MS;
 
+//Energy
+#define ENERGY_SAVE_THRESHOLD 0.1 //Save energy only if the value differentiate from previous value X kWh.
+#define ENERGY_SAVE_INTERVAL 10 //Save energy every 10 minutes
+
 
 // temp settings
 bool useFahrenheit = false;
 // support heat mode settings, some model do not support heat mode
 bool supportHeatMode = true;
+
+// Languages
+#include "languages/en-GB.h" // default language English
+
+//IOs
+#ifdef ESP32
+  #define LED_PWR 5
+  #define LED_ACT 6
+  #define BTN_1 0
+  #define BUZZER 14
+  #define BUZZER_FREQ 4000
+  #define LED_ON      HIGH
+  #define LED_OFF     LOW
+#endif
+
+#ifdef ESP8266
+  #define LED_ACT 2
+  #define LED_ON      LOW
+  #define LED_OFF     HIGH
+#endif
+
+//Buzzer settings
+enum Buzzer_preset{
+  ON,
+  SET,
+  OFF
+};
+bool beep = true;
