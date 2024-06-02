@@ -125,6 +125,7 @@ class HeatPump
     static const int PACKET_SENT_INTERVAL_MS = 1000;
     static const int PACKET_INFO_INTERVAL_MS = 2000;
     static const int PACKET_TYPE_DEFAULT = 99;
+    static const int PACKET_RESPONSE_WAIT_TIME = 1000;
 
     static const int CONNECT_LEN = 8;
     const byte CONNECT[CONNECT_LEN] = {0xfc, 0x5a, 0x01, 0x30, 0x02, 0xca, 0x01, 0xa8};
@@ -217,7 +218,7 @@ class HeatPump
     int    lookupByteMapIndex(const int valuesMap[], int len, int lookupValue);
 
     bool canSend(bool isInfo);
-    bool canRead();
+    // bool canRead();
     byte checkSum(byte bytes[], int len);
     void createPacket(byte *packet, heatpumpSettings settings);
     void createInfoPacket(byte *packet, byte packetType);
