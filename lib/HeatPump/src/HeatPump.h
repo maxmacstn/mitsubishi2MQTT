@@ -24,6 +24,11 @@
 #include "WProgram.h"
 #endif
 
+#if defined(__WIFIKITSAMD__)
+  #include "wiring_private.h" 
+  #include <Uart.h>
+#endif
+
 #include <map>
 
 /* 
@@ -44,6 +49,8 @@
 #define PACKET_CALLBACK_SIGNATURE void (*packetCallback)(byte* packet, unsigned int length, char* packetDirection)
 #define ROOM_TEMP_CHANGED_CALLBACK_SIGNATURE void (*roomTempChangedCallback)(float currentRoomTemperature)
 #endif
+
+#define	QUEUE_IMPLEMENTATION	FIFO
 
 typedef uint8_t byte;
 
@@ -122,10 +129,13 @@ class HeatPump
 {
   private:
     static const int PACKET_LEN = 22;
-    static const int PACKET_SENT_INTERVAL_MS = 1000;
-    static const int PACKET_INFO_INTERVAL_MS = 2000;
+    static const int PACKET_SENT_INTERVAL_MS = 5000;  //Request new info/send data to the A/C with at least 5s gap.
+    int  packet_sent_delay_interval_ms = PACKET_SENT_INTERVAL_MS; 
+    // static const int PACKET_SENT_INTERVAL_MS = 500;
+    static const int PACKET_INFO_INTERVAL_MS = 1000;
+    // static const int PACKET_INFO_INTERVAL_MS = 100;
     static const int PACKET_TYPE_DEFAULT = 99;
-    static const int PACKET_RESPONSE_WAIT_TIME = 1000;
+    static const int PACKET_RESPONSE_WAIT_TIME = 500;   //Response packet from A/C should arrive less than 500ms (Typical 100-200ms)
 
     static const int CONNECT_LEN = 8;
     const byte CONNECT[CONNECT_LEN] = {0xfc, 0x5a, 0x01, 0x30, 0x02, 0xca, 0x01, 0xa8};
@@ -194,15 +204,22 @@ class HeatPump
     // these settings will be initialised in connect()
     heatpumpSettings currentSettings {};
     heatpumpSettings wantedSettings {};
+    // heatpumpSettings lastSentSettings {};
 
     // initialise to all off, then it will update shortly after connect;
     heatpumpStatus currentStatus {0, false, {TIMER_MODE_MAP[0], 0, 0, 0, 0}, 0};
 
     heatpumpFunctions functions;
   
-    HardwareSerial * _HardSerial {nullptr};
+    #if defined(__WIFIKITSAMD__)
+    Uart * _HardSerial {nullptr};
+    #else
+      HardwareSerial * _HardSerial {nullptr};
+    #endif
+
     unsigned long lastSend;
-    bool waitForRead;
+    unsigned long lastSendUpdate;
+    // bool waitForRead;
     int infoMode;
     unsigned long lastRecv;
     bool connected = false;
@@ -211,6 +228,8 @@ class HeatPump
     bool tempMode;
     bool externalUpdate;
     bool wideVaneAdj;
+    bool updating = false;
+    bool powerSettingUpdate = false;
 
     const char* lookupByteMapValue(const char* valuesMap[], const byte byteMap[], int len, byte byteValue);
     int    lookupByteMapValue(const int valuesMap[], const byte byteMap[], int len, byte byteValue);
@@ -218,11 +237,11 @@ class HeatPump
     int    lookupByteMapIndex(const int valuesMap[], int len, int lookupValue);
 
     bool canSend(bool isInfo);
-    // bool canRead();
+    bool canRead();
     byte checkSum(byte bytes[], int len);
     void createPacket(byte *packet, heatpumpSettings settings);
     void createInfoPacket(byte *packet, byte packetType);
-    int readPacket();
+    int readPacket(bool waitForPacket = false);   //waitForPacket = blocking and wait for packet to arrive
     void writePacket(byte *packet, int length);
     void prepareInfoPacket(byte* packet, int length);
     void prepareSetPacket(byte* packet, int length);
@@ -244,12 +263,18 @@ class HeatPump
 
     // general
     HeatPump();
-    bool connect(HardwareSerial *serial);
-    bool connect(HardwareSerial *serial, int bitrate);
-    bool connect(HardwareSerial *serial, int rx, int tx);
-    bool connect(HardwareSerial *serial, int bitrate, int rx, int tx);
+
+    #if defined(__WIFIKITSAMD__)
+      bool connect(Uart *serial, int bitrate = 2400);
+    #else
+      bool connect(HardwareSerial *serial);
+      bool connect(HardwareSerial *serial, int bitrate);
+      bool connect(HardwareSerial *serial, int rx, int tx);
+      bool connect(HardwareSerial *serial, int bitrate, int rx, int tx);
+    #endif
     bool update();
     void sync(byte packetType = PACKET_TYPE_DEFAULT);
+    void setInfoModeIndex(int index = 0);
     void enableExternalUpdate();
     void disableExternalUpdate();
     void enableAutoUpdate();
@@ -280,6 +305,7 @@ class HeatPump
     float getRoomTemperature();
     bool getOperating();
     bool isConnected();
+    bool sendPending();
 
     // functions
     // NOTE: These methods have been tested with a PVA (P-series air handler) unit and has not been tested with anything else. Use at your own risk.

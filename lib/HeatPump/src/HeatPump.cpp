@@ -90,8 +90,9 @@ bool operator!=(const heatpumpTimers &lhs, const heatpumpTimers &rhs)
 HeatPump::HeatPump()
 {
   lastSend = 0;
+  lastSendUpdate = 0;
   infoMode = 0;
-  lastRecv = millis() - (PACKET_SENT_INTERVAL_MS * 10);
+  lastRecv = millis() - (PACKET_SENT_INTERVAL_MS * 60);
   autoUpdate = false;
   firstRun = true;
   tempMode = false;
@@ -102,6 +103,45 @@ HeatPump::HeatPump()
 }
 
 // Public Methods //////////////////////////////////////////////////////////////
+
+#if defined(__WIFIKITSAMD__)
+
+bool HeatPump::connect(Uart *serial, int bitrate)
+{
+
+  if (serial != NULL)
+  {
+    _HardSerial = serial;
+  }
+  _HardSerial->begin(bitrate, SERIAL_8E1);
+  _HardSerial->setTimeout(PACKET_RESPONSE_WAIT_TIME);
+
+  pinPeripheral(10, PIO_SERCOM);
+  pinPeripheral(11, PIO_SERCOM);
+
+  if (onConnectCallback)
+  {
+    onConnectCallback();
+  }
+
+  // settle before we start sending packets
+  delay(2000);
+
+  // send the CONNECT packet twice - need to copy the CONNECT packet locally
+  byte packet[CONNECT_LEN];
+  memcpy(packet, CONNECT, CONNECT_LEN);
+
+  writePacket(packet, CONNECT_LEN); //Send connect command
+  int packetType = readPacket(true);  //Read response packet (blocking)
+  
+  if (packetType != RCVD_PKT_CONNECT_SUCCESS && bitrate == 2400)
+  {
+    return connect(serial, 9600);
+  }
+  return packetType == RCVD_PKT_CONNECT_SUCCESS;
+}
+
+#else
 
 bool HeatPump::connect(HardwareSerial *serial)
 {
@@ -131,18 +171,22 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx)
     retry = true;
   }
   connected = false;
+  Serial.printf("Connecting at baud rate %d\n", bitrate);
   if (rx >= 0 && tx >= 0)
   {
-#if defined(ESP32)
+    #if defined(ESP32)
     _HardSerial->begin(bitrate, SERIAL_8E1, rx, tx);
-#else
+    #else
     _HardSerial->begin(bitrate, SERIAL_8E1);
-#endif
+    #endif
   }
   else
   {
     _HardSerial->begin(bitrate, SERIAL_8E1);
   }
+
+  _HardSerial->setTimeout(PACKET_RESPONSE_WAIT_TIME);
+  
   if (onConnectCallback)
   {
     onConnectCallback();
@@ -154,79 +198,111 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx)
   // send the CONNECT packet twice - need to copy the CONNECT packet locally
   byte packet[CONNECT_LEN];
   memcpy(packet, CONNECT, CONNECT_LEN);
-  // for(int count = 0; count < 2; count++) {
-  writePacket(packet, CONNECT_LEN);
-  // while (!canRead())
-  // {
-  //   delay(10);
-  // }
-  int packetType = readPacket();
-  if (packetType != RCVD_PKT_CONNECT_SUCCESS && retry)
+
+  writePacket(packet, CONNECT_LEN); //Send connect command
+  int packetType = readPacket(true);  //Read response packet (blocking)
+  
+  if (packetType != RCVD_PKT_CONNECT_SUCCESS && bitrate == 2400)
   {
-    return connect(serial, 9600, rx, tx);
+    return connect(serial, 9600);
   }
   return packetType == RCVD_PKT_CONNECT_SUCCESS;
-  //}
+
+  
 }
+
+#endif
 
 bool HeatPump::update()
 {
-  while (!canSend(false))
+
+  if (!canSend(false))
   {
-    delay(10);
+    // SerialUSB.println("Could not send yet.");
+    return false;
   }
+
+  // SerialUSB.println("Send new command");
+
+  //Set flag if the current update is a power setting (will need to add more delay to next command)
+  powerSettingUpdate = wantedSettings.power != currentSettings.power;
+  // SerialUSB.println("Power setting update = " + powerSettingUpdate);
+  if (powerSettingUpdate){
+    packet_sent_delay_interval_ms = PACKET_SENT_INTERVAL_MS + 10000;
+  }else{
+    packet_sent_delay_interval_ms = PACKET_SENT_INTERVAL_MS;
+  }
+
 
   byte packet[PACKET_LEN] = {};
   createPacket(packet, wantedSettings);
   writePacket(packet, PACKET_LEN);
 
-  // while (!canRead())
-  // {
-  //   delay(10);
-  // }
-  int packetType = readPacket();
-
-  if (packetType == RCVD_PKT_UPDATE_SUCCESS)
-  {
-    // call sync() to get the latest settings from the heatpump for autoUpdate, which should now have the updated settings
-    if (autoUpdate)
-    { // this sync will happen regardless, but autoUpdate needs it sooner than later.
-      while (!canSend(true))
-      {
-        delay(10);
-      }
-      sync(RQST_PKT_SETTINGS);
-    }
-
-    return true;
-  }
-  else
-  {
-    return false;
-  }
+  currentSettings = wantedSettings;
+  updating = true;
+  lastSendUpdate = millis();
+  return true;
 }
 
+// Default PACKET_TYPE_DEFAULT = 99;
 void HeatPump::sync(byte packetType)
 {
-  if ((!connected) || (millis() - lastRecv > (PACKET_SENT_INTERVAL_MS * 10)))
+  if ((!connected) || (millis() - lastRecv > (PACKET_SENT_INTERVAL_MS * 12)))
   {
+    connected = false;
     connect(NULL);
   }
-  else
+  else if (sendPending()) // Command to send is pending.
+  { 
+    update();
+  }
+  else if (updating) // Previously send a command, then check for ack.
+  {
+      int packetType = readPacket();
+
+      if (packetType == RCVD_PKT_UPDATE_SUCCESS) // 0xFC 0x61
+      {
+        // call sync() to get the latest settings from the heatpump for autoUpdate, which should now have the updated settings
+        if (autoUpdate)
+        { // this sync will happen regardless, but autoUpdate needs it sooner than later.
+          while (!canSend(true))
+          {
+            delay(10);
+          }
+          sync(RQST_PKT_SETTINGS);
+        }
+
+        // SerialUSB.println("A/C update Success");
+        return;
+      }
+      else
+      {
+        // SerialUSB.println("A/C update failed");
+        return;
+      }
+  }
+  else if (canRead())   //Periodic serial read for any incoming data.
   {
     readPacket();
   }
-
-  if (autoUpdate && !firstRun && wantedSettings != currentSettings && packetType == PACKET_TYPE_DEFAULT)
+  else if (autoUpdate && !firstRun && wantedSettings != currentSettings && packetType == PACKET_TYPE_DEFAULT)
   {
     update();
   }
-  else if (canSend(true))
+
+  
+  if (canSend(true))//    Fetch new A/C status if possible
   {
     byte packet[PACKET_LEN] = {};
     createInfoPacket(packet, packetType);
     writePacket(packet, PACKET_LEN);
   }
+  
+}
+
+bool HeatPump::sendPending()
+{
+  return wantedSettings != currentSettings;
 }
 
 void HeatPump::enableExternalUpdate()
@@ -268,6 +344,8 @@ void HeatPump::setSettings(heatpumpSettings settings)
   setFanSpeed(settings.fan);
   setVaneSetting(settings.vane);
   setWideVaneSetting(settings.wideVane);
+
+  
 }
 
 bool HeatPump::getPowerSettingBool()
@@ -277,6 +355,13 @@ bool HeatPump::getPowerSettingBool()
 
 void HeatPump::setPowerSetting(bool setting)
 {
+
+  // if (strcmp(wantedSettings.power, lookupByteMapIndex(POWER_MAP, 2, POWER_MAP[setting ? 1 : 0]) > -1 ? POWER_MAP[setting ? 1 : 0] : POWER_MAP[0] == 0)){
+  //   powerSettingUpdate = false;
+  // }else{
+  //   powerSettingUpdate = true;
+  // }
+
   wantedSettings.power = lookupByteMapIndex(POWER_MAP, 2, POWER_MAP[setting ? 1 : 0]) > -1 ? POWER_MAP[setting ? 1 : 0] : POWER_MAP[0];
 }
 
@@ -288,14 +373,20 @@ const char *HeatPump::getPowerSetting()
 void HeatPump::setPowerSetting(const char *setting)
 {
   int index = lookupByteMapIndex(POWER_MAP, 2, setting);
-  if (index > -1)
+  if (index < 0)
   {
-    wantedSettings.power = POWER_MAP[index];
+    index = 0;
   }
-  else
-  {
-    wantedSettings.power = POWER_MAP[0];
-  }
+
+
+  // if (strcmp(wantedSettings.power, POWER_MAP[index]) == 0){
+  //     powerSettingUpdate = false;
+  // }else{
+  //   powerSettingUpdate = true;
+  // }
+
+  wantedSettings.power = POWER_MAP[index];
+
 }
 
 const char *HeatPump::getModeSetting()
@@ -557,14 +648,32 @@ int HeatPump::lookupByteMapValue(const int valuesMap[], const byte byteMap[], in
 }
 
 bool HeatPump::canSend(bool isInfo)
+
 {
-  return (millis() - (isInfo ? PACKET_INFO_INTERVAL_MS : PACKET_SENT_INTERVAL_MS)) > lastSend;
+  // return (millis() - (isInfo ? PACKET_INFO_INTERVAL_MS : PACKET_SENT_INTERVAL_MS)) > lastSend;
+
+  if (isInfo)
+  {
+     if (powerSettingUpdate  && millis() - lastSendUpdate < PACKET_SENT_INTERVAL_MS + 10000 ){
+    //  if ( millis() - lastSendUpdate < 10000 ){
+        return false;
+     }
+    // return millis() - lastSend > PACKET_INFO_INTERVAL_MS;
+    return millis() - lastSend > PACKET_INFO_INTERVAL_MS;
+  }
+  else
+  {
+    return millis() - lastSendUpdate > packet_sent_delay_interval_ms && millis() - lastSend > PACKET_INFO_INTERVAL_MS;
+
+  }
 }
 
-// bool HeatPump::canRead()
-// {
-//   return (waitForRead && (millis() - PACKET_SENT_INTERVAL_MS) > lastSend);
-// }
+bool HeatPump::canRead()
+{
+  // return (waitForRead && (millis() - PACKET_SENT_INTERVAL_MS) > lastSend);
+  // return (waitForRead && (millis() - PACKET_RESPONSE_WAIT_TIME) > lastSend);
+  return (millis() - PACKET_RESPONSE_WAIT_TIME) > lastSend;
+}
 
 byte HeatPump::checkSum(byte bytes[], int len)
 {
@@ -576,15 +685,34 @@ byte HeatPump::checkSum(byte bytes[], int len)
   return (0xfc - sum) & 0xff;
 }
 
+
+static void readHPsettings(heatpumpSettings hpSettings)
+{
+
+  #if !defined(CDC_DISABLED) && defined(__WIFIKITSAMD__)
+  SerialUSB.println("\tPower: " + String(hpSettings.power));
+  SerialUSB.println("\tMode: " + String(hpSettings.mode));
+  float degc = hpSettings.temperature;
+  SerialUSB.println("\tTarget: " + String(degc, 1));
+  SerialUSB.println("\tFan: " + String(hpSettings.fan));
+  SerialUSB.println("\tSwing: H:" + String(hpSettings.wideVane) + " V:" + String(hpSettings.vane));
+  #endif
+}
+
 void HeatPump::createPacket(byte *packet, heatpumpSettings settings)
 {
   prepareSetPacket(packet, PACKET_LEN);
+  // SerialUSB.println("Local Settings");
+  readHPsettings(currentSettings);
+  // SerialUSB.println("Send Settings");
+  readHPsettings(settings);
 
   if (settings.power != currentSettings.power)
   {
     packet[8] = POWER[lookupByteMapIndex(POWER_MAP, 2, settings.power)];
     packet[6] += CONTROL_PACKET_1[0];
   }
+
   if (settings.mode != currentSettings.mode)
   {
     packet[9] = MODE[lookupByteMapIndex(MODE_MAP, 5, settings.mode)];
@@ -619,6 +747,14 @@ void HeatPump::createPacket(byte *packet, heatpumpSettings settings)
   // add the checksum
   byte chkSum = checkSum(packet, 21);
   packet[21] = chkSum;
+}
+
+void HeatPump::setInfoModeIndex(int index)
+{
+  if (index < INFOMODE_LEN)
+  {
+    infoMode = index;
+  }
 }
 
 void HeatPump::createInfoPacket(byte *packet, byte packetType)
@@ -666,6 +802,10 @@ void HeatPump::writePacket(byte *packet, int length)
 
 #ifdef ESP32
   Serial.println("CN105 >> " + getHEXformatted(packet, length));
+#elif __WIFIKITSAMD__ 
+  #ifndef CDC_DISABLED
+  SerialUSB.println("CN105 >> " + getHEXformatted(packet, length));
+  #endif
 #endif
 
   for (int i = 0; i < length; i++)
@@ -677,17 +817,16 @@ void HeatPump::writePacket(byte *packet, int length)
   {
     packetCallback(packet, length, (char *)"packetSent");
   }
-  waitForRead = true;
-  // lastSend = millis();
+  // waitForRead = true;
+  lastSend = millis();
 
   // readPacket();
 }
 
-int HeatPump::readPacket()
+int HeatPump::readPacket(bool waitForPacket)
 {
   byte header[INFOHEADER_LEN] = {};
   byte data[PACKET_LEN] = {};
-  bool foundStart = false;
   int dataSum = 0;
   byte checksum = 0;
   byte dataLength = 0;
@@ -695,56 +834,68 @@ int HeatPump::readPacket()
   uint8_t len = 0;
   bool receiveSuccess = false;
 
-  if (!waitForRead){
-    return RCVD_PKT_FAIL;
-  }
 
-  while (millis() - startTime < PACKET_RESPONSE_WAIT_TIME)
+  //Has incoming message in buffer.
+  if (_HardSerial->available() > 0 || waitForPacket)
   {
-    if (_HardSerial->available() > 0)
+    while (millis() - startTime < PACKET_RESPONSE_WAIT_TIME)
     {
-      char c = _HardSerial->read();
-      // Serial.printf("len = %d In: %x \n", len, c);
-
-      // Check packet
-      if (len < 4 && len != 1)
+      if (_HardSerial->available() > 0)
       {
-        if (c != HEADER[len])
+        char c = _HardSerial->read();
+
+        // Check packet
+        if (len < 4 && len != 1)
         {
-          Serial.println("Header invalid");
-          return RCVD_PKT_FAIL;
+          if (c != HEADER[len])
+          {
+            // Serial.println("Header invalid");
+            _HardSerial->flush();
+            return RCVD_PKT_FAIL;
+          }
         }
-      }
-      if (len == 4)
-      {
-        dataLength = c;
-      }
+        if (len == 4)
+        {
+          dataLength = c;
+        }
 
-      // Store packet
-      if (len <= 4)
-      {
-        header[len] = c;
-      }
-      else 
-      { // Data bytes + checksum byte
-        // Serial.printf("Data elem %d, %x\n", len-5, c);
-        data[len - 5] = c;
-      }
+        // Store packet
+        if (len <= 4)
+        {
+          header[len] = c;
+        }
+        else
+        { // Data bytes + checksum byte
+          // Serial.printf("Data elem %d, %x\n", len-5, c);
+          data[len - 5] = c;
+        }
 
+        // End condition
+        if (len == dataLength + 5)
+        {
+          receiveSuccess = true;
+          len++;
+          break;
+        }
 
-      //End condition
-      if (len == dataLength + 5)
-      {
-        receiveSuccess = true;
         len++;
-        break;
       }
-
-      len++;
     }
+  }else{
+    return RCVD_PKT_FAIL; //No response
   }
+
+
+  _HardSerial->flush();
   if (!receiveSuccess)
   {
+#ifdef ESP32
+    Serial.println("Wait read timeout");
+#elif __WIFIKITSAMD__
+    #ifndef CDC_DISABLED
+    SerialUSB.println("Wait read timeout");
+    #endif
+#endif
     return RCVD_PKT_FAIL;
   }
 
@@ -761,13 +912,15 @@ int HeatPump::readPacket()
   }
 
 #ifdef ESP32
-  Serial.println("CN105 << " + getHEXformatted(header, INFOHEADER_LEN) + "|" + getHEXformatted(data, dataLength+1));
-  // Serial.println("CN105 << " + getHEXformatted(header, len));
+  Serial.println("CN105 << " + getHEXformatted(header, INFOHEADER_LEN) + "|" + getHEXformatted(data, dataLength + 1));
+#elif __WIFIKITSAMD__
+  #ifndef CDC_DISABLED
+  SerialUSB.println("CN105 << " + getHEXformatted(header, INFOHEADER_LEN) + "|" + getHEXformatted(data, dataLength + 1));
+  #endif
 #endif
 
   // calculate checksum
   checksum = (0xfc - dataSum) & 0xff;
-
 
   if (data[dataLength] == checksum)
   {
@@ -847,12 +1000,14 @@ int HeatPump::readPacket()
           currentSettings = receivedSettings;
         }
 
-        // if this is the first time we have synced with the heatpump, set wantedSettings to receivedSettings
-        if (firstRun || (autoUpdate && externalUpdate))
-        {
-          wantedSettings = currentSettings;
-          firstRun = false;
-        }
+        // // if this is the first time we have synced with the heatpump, set wantedSettings to receivedSettings
+        // if (firstRun || (autoUpdate && externalUpdate))
+        // {
+        //   wantedSettings = currentSettings;
+        //   firstRun = false;
+        // }
+
+        wantedSettings = currentSettings;
 
         return RCVD_PKT_SETTINGS;
       }
@@ -979,6 +1134,7 @@ int HeatPump::readPacket()
 
     if (header[1] == 0x61)
     { // Last update was successful
+      updating = false;
       return RCVD_PKT_UPDATE_SUCCESS;
     }
     else if (header[1] == 0x7a)

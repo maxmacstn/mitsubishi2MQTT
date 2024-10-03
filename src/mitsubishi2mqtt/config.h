@@ -16,7 +16,7 @@
 
 //#define MY_LANGUAGE fr-FR // define your language
 
-const PROGMEM char* m2mqtt_version = "Mitsubishi2MQTT - magi's edition (2024.6.1)";
+const PROGMEM char* m2mqtt_version = "Mitsubishi2MQTT - magi's edition (2024.10.1)";
 
 //Define global variables for files
 #ifdef ESP32
@@ -72,6 +72,8 @@ const PROGMEM char* HA_thermometer_icon = "mdi:thermometer";
 const PROGMEM char* HA_lightning_bolt = "mdi:lightning-bolt-circle";
 const PROGMEM char* HA_counter = "mdi:counter";
 const PROGMEM char* HA_restart = "mdi:restart";
+const PROGMEM char* HA_led = "mdi:wall-sconce-flat-variant";
+const PROGMEM char* HA_beep = "mdi:volume-high";
 const PROGMEM char* HA_vane_vertical_icon = "mdi:arrow-up-down";
 const PROGMEM char* HA_vane_horizontal_icon = "mdi:arrow-left-right";
 
@@ -89,6 +91,7 @@ String ha_fan_set_topic;
 String ha_vane_set_topic;
 String ha_wideVane_set_topic;
 String ha_settings_topic;
+String ha_unit_settings_topic;
 String ha_state_topic;
 String ha_debug_topic;
 String ha_debug_set_topic;
@@ -98,11 +101,16 @@ String ha_sensor_power_config_topic;
 String ha_sensor_energy_config_topic;
 String ha_select_vane_vertical_config_topic;
 String ha_select_vane_horizontal_config_topic;
+String ha_switch_unit_led_config_topic;
+String ha_switch_unit_beep_config_topic;
+
 String ha_button_reset_energy_config_topic;
 String ha_button_energy_set_topic;
 String ha_discovery_topic;
 String ha_custom_packet;
 String ha_availability_topic;
+String ha_switch_unit_led_set_topic;
+String ha_switch_unit_beep_set_topic;
 String hvac_name;
 
 //login
@@ -150,6 +158,8 @@ bool supportHeatMode = true;
   #define BUZZER_FREQ 4000
   #define LED_ON      HIGH
   #define LED_OFF     LOW
+  #define PIN_AC_TX 43
+  #define PIN_AC_RX 44
 #endif
 
 #ifdef ESP8266
@@ -165,3 +175,4 @@ enum Buzzer_preset{
   OFF
 };
 bool beep = true;
+bool ledEnabled = true; 

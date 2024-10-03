@@ -60,6 +60,8 @@ const char txt_f_45s[] PROGMEM = "45 seconds";
 const char txt_f_60s[] PROGMEM = "60 seconds";
 const char txt_f_beep_on[] PROGMEM = "ON";
 const char txt_f_beep_off[] PROGMEM = "OFF";
+const char txt_f_led_on[] PROGMEM = "ON";
+const char txt_f_led_off[] PROGMEM = "OFF";
 
 //Page Reboot, save & Resseting
 const char txt_m_reboot[] PROGMEM = "Rebooting... Refresh in";
@@ -118,6 +120,7 @@ const char txt_unit_update_interval[] PROGMEM = "Update interval";
 const char txt_unit_modes[] PROGMEM = "Mode support";
 const char txt_unit_password[] PROGMEM = "Web password";
 const char txt_unit_beep[] PROGMEM = "Beep";
+const char txt_unit_led[] PROGMEM = "LED";
 
 
 //Page Login

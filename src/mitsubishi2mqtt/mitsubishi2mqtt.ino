@@ -105,13 +105,14 @@ boolean wifi_config = false;
 
 // HVAC
 HeatPump hp;
-unsigned long lastTempSend;
+unsigned long lastUpdate ;
 unsigned long lastCommandSend;
 unsigned long lastMqttRetry;
 unsigned long lastHpSync;
 unsigned int hpConnectionRetries;
 unsigned int hpConnectionTotalRetries;
 float energy = 0; // kWh
+bool previousCMDisPower = true;
 
 // Local state
 StaticJsonDocument<JSON_OBJECT_SIZE(14)> rootInfo;
@@ -156,6 +157,8 @@ void checkMRD()
   if (mrd->detectMultiReset())
   {
     wifiFactoryReset();
+    delay(1000);
+    ESP.restart();
   }
 }
 #endif
@@ -224,54 +227,122 @@ void testMode()
 #ifdef ESP32
 
   acSerial->begin(115200);
-  acSerial->println("TestMode");
-  playBeep(ON);
-  for (int i = 0; i < 10; i++)
-  {
-    digitalWrite(LED_PWR, LOW);
-    digitalWrite(LED_ACT, HIGH);
-    delay(100);
-    digitalWrite(LED_PWR, HIGH);
-    digitalWrite(LED_ACT, LOW);
-    delay(100);
-  }
-  digitalWrite(LED_ACT, HIGH);
 
-  SPIFFS.format();
-  acSerial->println("format_done");
+  delay(3000);
+  String res = "";
+  bool wifireset = false;
+  bool wifiScanning = false;
+  if (acSerial->available() > 0)
+  {
+    res = acSerial->readStringUntil('\n');
+    if (res.indexOf("TESTMODE") == -1)
+    {
+      return;
+    }
+  }
+  else
+  {
+    acSerial->end();
+    delay(1000);
+    return;
+  }
+  acSerial->println("OK");
+
+  Serial.begin(115200);
+
+  Serial.println("-- Enter test mode --");
+
+  playBeep(ON);
 
   while (1)
   {
-    digitalWrite(LED_ACT, millis() / 1000 % 2);
-    if (acSerial->available())
+
+    if (acSerial->available() > 0)
     {
-      String cmd = acSerial->readStringUntil('\n');
-      if (cmd == "mac")
+      res = acSerial->readStringUntil('\n');
+
+      Serial.println("HWSERIAL <" + res);
+
+      if (res.indexOf("INIT") != -1)
       {
-        acSerial->println("mac");
+        wifiFactoryReset();
+        acSerial->println("OK");
+      }
+
+      else if (res.indexOf("SWVERSION?") != -1)
+      {
+        acSerial->println(String((char *)m2mqtt_version));
+      }
+
+      else if (res.indexOf("HWVERSION?") != -1)
+      {
+        acSerial->println(hardware_version);
+      }
+
+
+      else if (res.indexOf("VOLTAGE") != -1)
+      {
+        acSerial->println("OK");
+        delay(50);
+        acSerial->end();
+        pinMode(PIN_AC_TX, OUTPUT);
+        pinMode(PIN_AC_RX, OUTPUT);
+
+        for (int i = 0; i < 10; i++)
+        {
+          digitalWrite(PIN_AC_TX, 0);
+          digitalWrite(PIN_AC_RX, 0);
+          delay(200);
+          digitalWrite(PIN_AC_TX, 1);
+          digitalWrite(PIN_AC_RX, 1);
+          delay(200);
+        }
+        delay(50);
+        acSerial->begin(115200);
+
+      }
+
+      else if (res.indexOf("mac?") != -1)
+      {
         acSerial->println(WiFi.macAddress());
       }
-      if (cmd == "wlan")
+      else if (res.indexOf("wlan?") != -1)
       {
         int numberOfNetworks = WiFi.scanNetworks();
         String wlan_list = "";
         for (int i = 0; i < numberOfNetworks; i++)
         {
-          wlan_list += WiFi.SSID(i) + "\t" + String(WiFi.RSSI(i)) + "\n";
+          wlan_list += WiFi.SSID(i) + "\t" + String(WiFi.RSSI(i)) + "\t";
         }
-        acSerial->println("wlan");
+        acSerial->print("wlan:");
         acSerial->println(wlan_list);
-      }
-      if (cmd == "serial")
-      {
+      
 
-        uint8_t buff[] = {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01};
-        acSerial->write(buff, 30);
-        delay(5000);
-        acSerial->println("done");
+      }
+      else if (res.indexOf("END") != -1)
+      {
+        playBeep(OFF);
+
+        while (1)
+        { 
+
+            if (acSerial->available() > 0){
+              res = acSerial->readStringUntil('\n');
+              Serial.println("HWSERIAL <" + res);
+              if (res.indexOf("CONNECTED?")!= -1){ 
+                acSerial->println("OK");
+              }
+            }
+
+
+
+          digitalWrite(LED_ACT, digitalRead(BTN_1));
+          digitalWrite(LED_ON, digitalRead(BTN_1));
+        }
       }
     }
-  }
+
+}
 
 #endif
 }
@@ -308,8 +379,7 @@ void wifiFactoryReset()
 
   SPIFFS.format();
 
-  delay(2000);
-  ESP.restart();
+
 }
 
 /*
@@ -421,7 +491,7 @@ void saveMqtt(String mqttFn, String mqttHost, String mqttPort, String mqttUser,
   configFile.close();
 }
 
-void saveUnit(String tempUnit, String supportMode, String updateInterval, String loginPassword, String minTemp, String maxTemp, String tempStep, String beep)
+void saveUnit(String tempUnit, String supportMode, String updateInterval, String loginPassword, String minTemp, String maxTemp, String tempStep, String beep, String ledEnabled)
 {
   const size_t capacity = JSON_OBJECT_SIZE(8) + 200;
   DynamicJsonDocument doc(capacity);
@@ -455,6 +525,9 @@ void saveUnit(String tempUnit, String supportMode, String updateInterval, String
   if (beep.isEmpty())
     beep = "1";
   doc["beep"] = beep;
+  if (ledEnabled.isEmpty())
+    ledEnabled = "1";
+  doc["ledEnabled"] = ledEnabled;
 
   doc["login_password"] = loginPassword;
   File configFile = SPIFFS.open(unit_conf, "w");
@@ -517,6 +590,42 @@ void saveOthers(String haa, String haat, String availability_report, String debu
   configFile.close();
 }
 
+bool saveUnitFeedback(bool beepEnabled, bool ledEnabled){
+  File configFile = SPIFFS.open(unit_conf, "r");
+  if (!configFile)
+  {
+    return false;
+  }
+
+  size_t size = configFile.size();
+  if (size > 1024)
+  {
+    return false;
+  }
+  std::unique_ptr<char[]> buf(new char[size]);
+
+  configFile.readBytes(buf.get(), size);
+  const size_t capacity = JSON_OBJECT_SIZE(3) + 200;
+  DynamicJsonDocument doc(capacity);
+  deserializeJson(doc, buf.get());
+
+  doc["beep"] = beepEnabled?"1":"0";
+  doc["ledEnabled"] = ledEnabled?"1":"0";
+
+  configFile.close();
+
+
+  configFile = SPIFFS.open(unit_conf, "w");
+  if (!configFile)
+  {
+    return false;
+    // Serial.println(F("Failed to open config file for writing"));
+  }
+  serializeJson(doc, configFile);
+  configFile.close();
+  return true;
+}
+
 // Initialize captive portal page
 void initCaptivePortal()
 {
@@ -574,7 +683,7 @@ bool loadMqtt()
 {
   if (!SPIFFS.exists(mqtt_conf))
   {
-    Serial.println(F("MQTT config file not exist!"));
+    // Serial.println(F("MQTT config file not exist!"));
     return false;
   }
   // write_log("Loading MQTT configuration");
@@ -664,6 +773,9 @@ bool loadUnit()
   }
   String beepStr = doc["beep"].as<String>();
   beep = beepStr == "1";
+
+  String ledEnabledStr = doc["ledEnabled"].as<String>();
+  ledEnabled = ledEnabledStr == "1";
   return true;
 }
 
@@ -1071,7 +1183,7 @@ void handleUnit()
 
   if (server.method() == HTTP_POST)
   {
-    saveUnit(server.arg("tu"), server.arg("md"), server.arg("update_int"), server.arg("lpw"), (String)convertLocalUnitToCelsius(server.arg("min_temp").toInt(), useFahrenheit), (String)convertLocalUnitToCelsius(server.arg("max_temp").toInt(), useFahrenheit), server.arg("temp_step"), server.arg("beep"));
+    saveUnit(server.arg("tu"), server.arg("md"), server.arg("update_int"), server.arg("lpw"), (String)convertLocalUnitToCelsius(server.arg("min_temp").toInt(), useFahrenheit), (String)convertLocalUnitToCelsius(server.arg("max_temp").toInt(), useFahrenheit), server.arg("temp_step"), server.arg("beep"), server.arg("led"));
     rebootAndSendPage();
   }
   else
@@ -1088,6 +1200,7 @@ void handleUnit()
     unitPage.replace("_TXT_UNIT_UPDATE_INTERVAL_", FPSTR(txt_unit_update_interval));
     unitPage.replace("_TXT_UNIT_PASSWORD_", FPSTR(txt_unit_password));
     unitPage.replace("_TXT_UNIT_BEEP_", FPSTR(txt_unit_beep));
+    unitPage.replace("_TXT_UNIT_LED_", FPSTR(txt_unit_led));
     unitPage.replace("_TXT_F_CELSIUS_", FPSTR(txt_f_celsius));
     unitPage.replace("_TXT_F_FH_", FPSTR(txt_f_fh));
     unitPage.replace("_TXT_F_ALLMODES_", FPSTR(txt_f_allmodes));
@@ -1099,6 +1212,8 @@ void handleUnit()
     unitPage.replace("_TXT_F_60_S", FPSTR(txt_f_60s));
     unitPage.replace("_TXT_F_BEEP_ON_", FPSTR(txt_f_beep_on));
     unitPage.replace("_TXT_F_BEEP_OFF_", FPSTR(txt_f_beep_off));
+    unitPage.replace("_TXT_F_LED_ON_", FPSTR(txt_f_led_on));
+    unitPage.replace("_TXT_F_LED_OFF_", FPSTR(txt_f_led_off));
     unitPage.replace(F("_MIN_TEMP_"), String(convertCelsiusToLocalUnit(min_temp, useFahrenheit)));
     unitPage.replace(F("_MAX_TEMP_"), String(convertCelsiusToLocalUnit(max_temp, useFahrenheit)));
     unitPage.replace(F("_TEMP_STEP_"), String(temp_step));
@@ -1119,6 +1234,12 @@ void handleUnit()
       unitPage.replace(F("_BEEP_ON_"), F("selected"));
     else
       unitPage.replace(F("_BEEP_OFF_"), F("selected"));
+
+    // led
+    if (ledEnabled)
+      unitPage.replace(F("_LED_ON_"), F("selected"));
+    else
+      unitPage.replace(F("_LED_OFF_"), F("selected"));
 
     switch (update_int)
     {
@@ -1696,6 +1817,7 @@ heatpumpSettings change_states(heatpumpSettings settings)
       settings.power = strdup(server.arg("POWER").c_str());
       Log.ln(TAG, "Power = " + String(settings.power));
       update = true;
+      previousCMDisPower = true;
     }
     if (server.hasArg("MODE"))
     {
@@ -1729,12 +1851,9 @@ heatpumpSettings change_states(heatpumpSettings settings)
     }
     if (update)
     {
-      digitalWrite(LED_ACT, LED_ON);
       playBeep(SET);
       hp.setSettings(settings);
-      hp.update();
       lastCommandSend = millis();
-      digitalWrite(LED_ACT, LED_OFF);
     }
   }
   return settings;
@@ -1757,7 +1876,9 @@ void hpSettingsChanged()
   // Log.ln(TAG, "hpSettingsChanged");
   // send room temp, operating info and all information
 
-  if ((millis() > (lastTempSend + update_int)) && (millis() > (lastCommandSend + POLL_DELAY_AFTER_SET_MS))) { // only send the temperature every update_int interval and not just sent command to A/C.
+
+  // if ((millis() > (lastUpdate + update_int)) && (millis() > (lastCommandSend + POLL_DELAY_AFTER_SET_MS))) { // only send the temperature every update_int interval and not just sent command to A/C.
+  if ((millis() - lastUpdate > update_int) && (millis()  - lastCommandSend >  ((previousCMDisPower) ? 30000 : POLL_DELAY_AFTER_SET_MS ))) { // only send the temperature every update_int interval and not just sent command to A/C.
 
     readHeatPumpSettings();
 
@@ -1850,9 +1971,10 @@ void calculateEnergy(heatpumpStatus currentStatus)
 
 void hpStatusChanged(heatpumpStatus currentStatus)
 {
-  if ((millis() > (lastTempSend + update_int)) && (millis() > (lastCommandSend + POLL_DELAY_AFTER_SET_MS))) { // only send the temperature every update_int interval and not just sent command to A/C.
-  // if ((millis() > (lastTempSend + update_int)))
-  // { // only send the temperature every update_int interval and not just sent command to A/C.
+
+
+  // if ((millis() > (lastTempSend + update_int)) && (millis() > (lastCommandSend + POLL_DELAY_AFTER_SET_MS))) { // only send the temperature every update_int interval and not just sent command to A/C.
+  if ((millis() - lastUpdate > update_int) && (millis()  - lastCommandSend >  ((previousCMDisPower) ? 30000 : POLL_DELAY_AFTER_SET_MS ))) { // only send the temperature every update_int interval and not just sent command to A/C.
 
     // send room temp, operating info and all information
     heatpumpSettings currentSettings = hp.getSettings();
@@ -1891,8 +2013,22 @@ void hpStatusChanged(heatpumpStatus currentStatus)
     Log.ln(TAG, "Free Stack Space:\t" + String(uxTaskGetStackHighWaterMark(NULL)));
     #endif
 
-    lastTempSend = millis();
+    lastUpdate = millis();
   }
+}
+
+void updateUnitSettings(){
+    String mqttOutput;
+    StaticJsonDocument<32> doc;
+    doc["led"] = ledEnabled?"ON":"OFF";
+    doc["beep"] = beep?"ON":"OFF";
+    serializeJson(doc,mqttOutput);
+
+    if (!mqtt_client.publish_P(ha_unit_settings_topic.c_str(), mqttOutput.c_str(), false))
+    {
+      if (_debugMode)
+        mqtt_client.publish(ha_debug_topic.c_str(), (char *)("Failed to publish hp status change"));
+    }
 }
 
 void hpPacketDebug(byte *packet, unsigned int length, const char *packetDirection)
@@ -1936,13 +2072,12 @@ void hpSendLocalState()
   }
 
   // Restart counter for waiting enought time for the unit to update before sending a state packet
-  lastTempSend = millis();
+  lastUpdate = millis();
 }
 
 void mqttCallback(char *topic, byte *payload, unsigned int length)
 {
-  digitalWrite(LED_ACT, LED_ON);
-
+  bool hvacControl = false;
   // Copy payload into message buffer
   char message[length + 1];
   for (unsigned int i = 0; i < length; i++)
@@ -1961,13 +2096,15 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     {
       playBeep(OFF);
       hp.setPowerSetting("OFF");
-      hp.update();
+      hvacControl = true;
+      previousCMDisPower = true;
     }
     else if (modeUpper == "ON")
     {
       playBeep(ON);
       hp.setPowerSetting("ON");
-      hp.update();
+      hvacControl = true;
+      previousCMDisPower = true;
     }
   }
   else if (strcmp(topic, ha_mode_set_topic.c_str()) == 0)
@@ -1981,6 +2118,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
       rootInfo["action"] = "off";
       hpSendLocalState();
       hp.setPowerSetting("OFF");
+      hvacControl = true;
     }
     else
     {
@@ -2019,13 +2157,15 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
       hpSendLocalState();
       hp.setPowerSetting("ON");
       hp.setModeSetting(modeUpper.c_str());
+      hvacControl = true;
+      previousCMDisPower = true;
     }
-    hp.update();
   }
   else if (strcmp(topic, ha_temp_set_topic.c_str()) == 0)
   {
     float temperature = strtof(message, NULL);
     float temperature_c = convertLocalUnitToCelsius(temperature, useFahrenheit);
+    temperature_c = int(temperature_c * 10) / 10; //remove decimal point
     if (temperature_c < min_temp || temperature_c > max_temp)
     {
       temperature_c = 23;
@@ -2033,12 +2173,12 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     }
     else
     {
-      rootInfo["temperature"] = temperature;
+      rootInfo["temperature"] = int(temperature * 10) / 10;  //remove decimal point
     }
     playBeep(SET);
     hpSendLocalState();
     hp.setTemperature(temperature_c);
-    hp.update();
+    hvacControl = true;
   }
   else if (strcmp(topic, ha_fan_set_topic.c_str()) == 0)
   {
@@ -2046,7 +2186,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     playBeep(SET);
     hpSendLocalState();
     hp.setFanSpeed(message);
-    hp.update();
+    hvacControl = true;
   }
   else if (strcmp(topic, ha_vane_set_topic.c_str()) == 0)
   {
@@ -2054,7 +2194,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     playBeep(SET);
     hpSendLocalState();
     hp.setVaneSetting(message);
-    hp.update();
+    hvacControl = true;
   }
   else if (strcmp(topic, ha_wideVane_set_topic.c_str()) == 0)
   {
@@ -2062,14 +2202,14 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     playBeep(SET);
     hpSendLocalState();
     hp.setWideVaneSetting(message);
-    hp.update();
+    hvacControl = true;
   }
   else if (strcmp(topic, ha_remote_temp_set_topic.c_str()) == 0)
   {
     float temperature = strtof(message, NULL);
     playBeep(SET);
     hp.setRemoteTemperature(convertLocalUnitToCelsius(temperature, useFahrenheit));
-    hp.update();
+    hvacControl = true;
   }
   else if (strcmp(topic, ha_debug_set_topic.c_str()) == 0)
   { // if the incoming message is on the heatpump_debug_set_topic topic...
@@ -2109,6 +2249,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     hpPacketDebug(bytes, byteCount, "customPacket");
     playBeep(SET);
     hp.sendCustomPacket(bytes, byteCount);
+    hvacControl = true;
   }
   else if (strcmp(topic, ha_button_energy_set_topic.c_str()) == 0)
   {
@@ -2120,13 +2261,26 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     saveEnergy(energy);
     rootInfo["energy"] = energy;
     hpSendLocalState();
+  }else if (strcmp(topic, ha_switch_unit_led_set_topic.c_str()) == 0){
+    ledEnabled = strcmp(message,"ON") == 0;
+    updateUnitSettings();
+    saveUnitFeedback(beep,ledEnabled);
+  }
+  else if (strcmp(topic, ha_switch_unit_beep_set_topic.c_str()) == 0){
+    beep = strcmp(message,"ON") == 0;
+    updateUnitSettings();
+    saveUnitFeedback(beep,ledEnabled);
   }
   else
   {
     mqtt_client.publish(ha_debug_topic.c_str(), strcat((char *)"heatpump: wrong mqtt topic: ", topic));
   }
-  lastCommandSend = millis();
-  digitalWrite(LED_ACT, HIGH);
+
+  if (hvacControl){
+    lastCommandSend = millis();
+    hp.setInfoModeIndex(0);
+  }
+
 }
 
 void addMQTTDeviceInfo(DynamicJsonDocument *JsonDocument)
@@ -2360,6 +2514,46 @@ void haConfig()
   mqtt_client.beginPublish(ha_select_vane_horizontal_config_topic.c_str(), mqttOutput.length(), true);
   mqtt_client.print(mqttOutput);
   mqtt_client.endPublish();
+
+  #ifdef ESP32
+  // LED Switch config
+  const size_t capacityLEDSwitchConfig = JSON_OBJECT_SIZE(7) + JSON_OBJECT_SIZE(8) + 2048;
+  DynamicJsonDocument haLEDSwitchConfig(capacityLEDSwitchConfig);
+  haLEDSwitchConfig["name"] = "LED";
+  haLEDSwitchConfig["unique_id"] = getId() + "_unit_led";
+  haLEDSwitchConfig["icon"] = HA_led;
+  haLEDSwitchConfig["command_topic"] = ha_switch_unit_led_set_topic;
+  haLEDSwitchConfig["entity_category"] = "config";
+  haLEDSwitchConfig["state_topic"] = ha_unit_settings_topic;
+  haLEDSwitchConfig["value_template"] = F("{{ value_json.led if (value_json is defined and value_json.led is defined and value_json.led|length) else 'ON' }}"); 
+
+  addMQTTDeviceInfo(&haLEDSwitchConfig);
+  mqttOutput.clear();
+  serializeJson(haLEDSwitchConfig, mqttOutput);
+  mqtt_client.beginPublish(ha_switch_unit_led_config_topic.c_str(), mqttOutput.length(), true);
+  mqtt_client.print(mqttOutput);
+  mqtt_client.endPublish();
+
+  // beep config
+  const size_t capacityBeepSwitchConfig = JSON_OBJECT_SIZE(7) + JSON_OBJECT_SIZE(8) + 2048;
+  DynamicJsonDocument haBeepSwitchConfig(capacityBeepSwitchConfig);
+  haBeepSwitchConfig["name"] = "Beep";
+  haBeepSwitchConfig["unique_id"] = getId() + "_unit_beep";
+  haBeepSwitchConfig["icon"] = HA_beep;
+  haBeepSwitchConfig["command_topic"] = ha_switch_unit_beep_set_topic;
+  haBeepSwitchConfig["entity_category"] = "config";
+  haBeepSwitchConfig["state_topic"] = ha_unit_settings_topic;
+  haBeepSwitchConfig["value_template"] = F("{{ value_json.beep if (value_json is defined and value_json.beep is defined and value_json.beep|length) else 'ON' }}"); 
+
+  addMQTTDeviceInfo(&haBeepSwitchConfig);
+  mqttOutput.clear();
+  serializeJson(haBeepSwitchConfig, mqttOutput);
+  mqtt_client.beginPublish(ha_switch_unit_beep_config_topic.c_str(), mqttOutput.length(), true);
+  mqtt_client.print(mqttOutput);
+  mqtt_client.endPublish();
+
+  #endif
+
 }
 
 void mqttConnect()
@@ -2402,11 +2596,14 @@ void mqttConnect()
       mqtt_client.subscribe(ha_remote_temp_set_topic.c_str());
       mqtt_client.subscribe(ha_custom_packet.c_str());
       mqtt_client.subscribe(ha_button_energy_set_topic.c_str());
+      mqtt_client.subscribe(ha_switch_unit_led_set_topic.c_str());
+      mqtt_client.subscribe(ha_switch_unit_beep_set_topic.c_str());
       mqtt_client.publish(ha_availability_topic.c_str(), mqtt_payload_available, true); // publish status as available
       if (others_haa)
       {
         haConfig();
       }
+      updateUnitSettings();
     }
   }
 }
@@ -2607,7 +2804,6 @@ void handleButton()
         {
           hp.setPowerSetting("OFF");
         }
-        hp.update();
         digitalWrite(LED_ACT, LED_OFF);
       }
       else
@@ -2631,7 +2827,8 @@ void handleButton()
     case (longLongPress):
       Log.ln(TAG, "Handle Long Long press");
       wifiFactoryReset();
-      btnAction = noPress;
+      delay(1000);
+      ESP.restart();
       break;
     }
   }
@@ -2727,13 +2924,15 @@ void setup()
   ledcWriteTone(0, 0);
 
   attachInterrupt(BTN_1, InterruptBTN, CHANGE);
-  // set test mode
   pinMode(BTN_1, INPUT_PULLUP);
   delay(1000);
-  if (!digitalRead(0))
+  if (!digitalRead(BTN_1))
   {
-    testMode();
+    wifiFactoryReset();
+    delay(1000);
+    ESP.restart();
   }
+  testMode();
 
   // Start serial for debug before HVAC connect to serial
   acSerial->begin(9600);
@@ -2828,12 +3027,15 @@ void setup()
       ha_vane_set_topic = mqtt_topic + "/" + mqtt_fn + "/vane/set";
       ha_wideVane_set_topic = mqtt_topic + "/" + mqtt_fn + "/wideVane/set";
       ha_settings_topic = mqtt_topic + "/" + mqtt_fn + "/settings";
+      ha_unit_settings_topic = mqtt_topic + "/" + mqtt_fn + "/unitSettings";
       ha_state_topic = mqtt_topic + "/" + mqtt_fn + "/state";
       ha_debug_topic = mqtt_topic + "/" + mqtt_fn + "/debug";
       ha_debug_set_topic = mqtt_topic + "/" + mqtt_fn + "/debug/set";
       ha_custom_packet = mqtt_topic + "/" + mqtt_fn + "/custom/send";
       ha_button_energy_set_topic = mqtt_topic + "/" + mqtt_fn + "/energy/set";
       ha_availability_topic = mqtt_topic + "/" + mqtt_fn + "/availability";
+      ha_switch_unit_led_set_topic = mqtt_topic + "/" + mqtt_fn + "/led/set";
+      ha_switch_unit_beep_set_topic = mqtt_topic + "/" + mqtt_fn + "/beep/set";
 
       if (others_haa)
       {
@@ -2844,6 +3046,8 @@ void setup()
         ha_button_reset_energy_config_topic = others_haa_topic + "/button/" + mqtt_fn + "/energy_reset/config";
         ha_select_vane_vertical_config_topic = others_haa_topic + "/select/" + mqtt_fn + "/vane_vertical/config";
         ha_select_vane_horizontal_config_topic = others_haa_topic + "/select/" + mqtt_fn + "/vane_horizontal/config";
+        ha_switch_unit_led_config_topic = others_haa_topic + "/switch/" + mqtt_fn + "/led/config";
+        ha_switch_unit_beep_config_topic = others_haa_topic + "/switch/" + mqtt_fn + "/beep/config";
       }
       // startup mqtt connection
       initMqtt();
@@ -2857,7 +3061,8 @@ void setup()
     hp.setStatusChangedCallback(hpStatusChanged);
     hp.setPacketCallback(hpPacketDebug);
     // Allow Remote/Panel
-    hp.enableExternalUpdate();
+    // hp.enableExternalUpdate();
+    hp.disableAutoUpdate();
     if (hp.connect(acSerial))
     {
       Log.ln(TAG, "HVAC connected!");
@@ -2878,8 +3083,8 @@ void setup()
     rootInfo["compressorFrequency"] = currentStatus.compressorFrequency;
     rootInfo["power"] = currentStatus.power;
     rootInfo["energy"] = roundf(energy * 100) / 100;
-    ;
-    lastTempSend = millis();
+
+    lastUpdate = millis();
   }
   else
   {
@@ -2900,6 +3105,7 @@ void setup()
 
 void loop()
 {
+  bool mqttOK = false;
   server.handleClient();
   ArduinoOTA.handle();
 #ifdef ESP32
@@ -2918,10 +3124,13 @@ void loop()
 
   if (!captive)
   {
-    digitalWrite(LED_ACT, LED_OFF);
+
     // Sync HVAC UNIT
     if (!hp.isConnected())
     {
+      #ifdef ESP32
+      digitalWrite(LED_PWR, millis() / 1000 %2);
+      #endif
       // Use exponential backoff for retries, where each retry is double the length of the previous one.
       unsigned long timeNextSync = (1 << hpConnectionRetries) * HP_RETRY_INTERVAL_MS + lastHpSync;
       if (((millis() > timeNextSync) or lastHpSync == 0))
@@ -2944,10 +3153,18 @@ void loop()
     }
     else
     {
+      
+      #ifdef ESP32
+      digitalWrite(LED_PWR, ledEnabled? LED_ON: LED_OFF);
+      #endif
       hpConnectionRetries = 0;
 
-
+        // Log.ln(TAG,"Sync");
         hp.sync();
+        delay(1000);
+        // Log.ln(TAG,"Sync done");
+        // currentSettings = ac.getSettings();
+        // currentStatus = ac.getStatus();
         // if (hp.isConnected()){
         //   readHPstate(hp.getSettings(), hp.getStatus());
         // }
@@ -2962,7 +3179,7 @@ void loop()
       // MQTT failed retry to connect
       if (mqtt_client.state() < MQTT_CONNECTED)
       {
-        digitalWrite(LED_ACT, LED_ON);
+        mqttOK = false;
 
         if ((millis() - lastMqttRetry > MQTT_RETRY_INTERVAL_MS) or lastMqttRetry == 0)
         {
@@ -2975,7 +3192,7 @@ void loop()
       // MQTT connected send status
       else
       {
-        digitalWrite(LED_ACT, LED_OFF);
+        mqttOK = true;
         hpStatusChanged(hp.getStatus());
         mqtt_client.loop();
       }
@@ -2985,6 +3202,13 @@ void loop()
   {
     dnsServer.processNextRequest();
     digitalWrite(LED_ACT, LED_ON);
+  }
+
+  //Handle ACT LED
+  if (hp.sendPending() || !mqttOK ){
+    digitalWrite(LED_ACT,LED_ON);
+  }else{
+    digitalWrite(LED_ACT,LED_OFF);
   }
 
 #ifdef ESP32
