@@ -271,7 +271,7 @@ void testMode()
 
       else if (res.indexOf("SWVERSION?") != -1)
       {
-        acSerial->println(String((char *)m2mqtt_version));
+        acSerial->println(String("Mitsubishi2MQTT - " + String(m2mqtt_version)));
       }
 
       else if (res.indexOf("HWVERSION?") != -1)
@@ -493,8 +493,7 @@ void saveMqtt(String mqttFn, String mqttHost, String mqttPort, String mqttUser,
 
 void saveUnit(String tempUnit, String supportMode, String updateInterval, String loginPassword, String minTemp, String maxTemp, String tempStep, String beep, String ledEnabled)
 {
-  const size_t capacity = JSON_OBJECT_SIZE(8) + 200;
-  DynamicJsonDocument doc(capacity);
+  StaticJsonDocument<128> doc;
   // if temp unit is empty, we use default celcius
   if (tempUnit.isEmpty())
     tempUnit = "cel";
@@ -605,8 +604,7 @@ bool saveUnitFeedback(bool beepEnabled, bool ledEnabled){
   std::unique_ptr<char[]> buf(new char[size]);
 
   configFile.readBytes(buf.get(), size);
-  const size_t capacity = JSON_OBJECT_SIZE(3) + 200;
-  DynamicJsonDocument doc(capacity);
+  StaticJsonDocument<128> doc;
   deserializeJson(doc, buf.get());
 
   doc["beep"] = beepEnabled?"1":"0";
@@ -747,8 +745,7 @@ bool loadUnit()
   std::unique_ptr<char[]> buf(new char[size]);
 
   configFile.readBytes(buf.get(), size);
-  const size_t capacity = JSON_OBJECT_SIZE(3) + 200;
-  DynamicJsonDocument doc(capacity);
+  StaticJsonDocument<128> doc;
   deserializeJson(doc, buf.get());
   // unit
   String unit_tempUnit = doc["unit_tempUnit"].as<String>();
@@ -1605,7 +1602,7 @@ void handleUpgrade()
 
 void handleUploadDone()
 {
-  // Serial.printl(PSTR("HTTP: Firmware upload done"));
+  Log.ln(TAG,"Upload done");
   bool restartflag = false;
   String uploadDonePage = FPSTR(html_page_upload);
   String content = F("<div style='text-align:center;'><b>Upload ");
@@ -1681,8 +1678,11 @@ void handleUploadLoop()
   if (!checkLogin())
     return;
 
+  // Log.ln(TAG, "Upload Loop");
   // Based on ESP8266HTTPUpdateServer.cpp uses ESP8266WebServer Parsing.cpp and Cores Updater.cpp (Update)
   // char log[200];
+  digitalWrite(LED_ACT, (millis() % 1000 / 100 % 2));
+
   if (uploaderror)
   {
     Update.end();
@@ -1691,6 +1691,7 @@ void handleUploadLoop()
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START)
   {
+    // Log.ln(TAG, "Upload Start");
     if (upload.filename.c_str()[0] == 0)
     {
       uploaderror = 1;
@@ -1702,23 +1703,24 @@ void handleUploadLoop()
       mqtt_client.disconnect();
       lastMqttRetry = millis();
     }
-    // snprintf_P(log, sizeof(log), PSTR("Upload: File %s ..."), upload.filename.c_str());
+
     // Serial.printl(log);
     uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
     if (!Update.begin(maxSketchSpace))
     { // start with max available size
-      // Update.printError(Serial);
+      // Log.ln(TAG, "Upload: Error, not enough storage");
       uploaderror = 2;
       return;
     }
   }
   else if (!uploaderror && (upload.status == UPLOAD_FILE_WRITE))
   {
+    // Log.ln(TAG, "Upload Write");
     if (upload.totalSize == 0)
     {
       if (upload.buf[0] != 0xE9)
       {
-        // Serial.println(PSTR("Upload: File magic header does not start with 0xE9"));
+        // Log.ln(TAG, "Upload: File magic header does not start with 0xE9" );
         uploaderror = 3;
         return;
       }
@@ -1730,7 +1732,7 @@ void handleUploadLoop()
       if (bin_flash_size > ESP.getFlashChipRealSize())
       {
 #endif
-        // Serial.printl(PSTR("Upload: File flash size is larger than device flash size"));
+        // Log.ln(TAG, "Upload: File flash size is larger than device flash size" );
         uploaderror = 4;
         return;
       }
@@ -1743,6 +1745,7 @@ void handleUploadLoop()
         upload.buf[2] = 2; // DIO - ESP8266
       }
     }
+    // Log.ln(TAG, "Update Write");
     if (!uploaderror && (Update.write(upload.buf, upload.currentSize) != upload.currentSize))
     {
       // Update.printError(Serial);
@@ -1752,9 +1755,9 @@ void handleUploadLoop()
   }
   else if (!uploaderror && (upload.status == UPLOAD_FILE_END))
   {
+    // Log.ln(TAG, "Update END");
     if (Update.end(true))
     { // true to set the size to the current progress
-      // snprintf_P(log, sizeof(log), PSTR("Upload: Successful %u bytes. Restarting"), upload.totalSize);
       // Serial.printl(log)
     }
     else
@@ -1766,11 +1769,16 @@ void handleUploadLoop()
   }
   else if (upload.status == UPLOAD_FILE_ABORTED)
   {
-    // Serial.println(PSTR("Upload: Update was aborted"));
+    // Log.ln(TAG, "Upload: Upload: Update was aborted");
     uploaderror = 7;
     Update.end();
   }
-  delay(0);
+
+  #ifdef ESP32
+    esp_task_wdt_reset();
+  #else
+    delay(0);
+  #endif
 }
 
 void handleLogging()
