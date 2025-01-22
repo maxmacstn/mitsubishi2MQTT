@@ -148,6 +148,7 @@ String hpGetMode(heatpumpSettings hvacSettings);
 void hpStatusChanged(heatpumpStatus currentStatus);
 void readHPstate();
 void playBeep(Buzzer_preset buzzer_preset);
+void updateUnitSettings();
 
 #ifdef ESP8266
 // Check multiple reset detector.
@@ -589,39 +590,8 @@ void saveOthers(String haa, String haat, String availability_report, String debu
   configFile.close();
 }
 
-bool saveUnitFeedback(bool beepEnabled, bool ledEnabled){
-  File configFile = SPIFFS.open(unit_conf, "r");
-  if (!configFile)
-  {
-    return false;
-  }
-
-  size_t size = configFile.size();
-  if (size > 1024)
-  {
-    return false;
-  }
-  std::unique_ptr<char[]> buf(new char[size]);
-
-  configFile.readBytes(buf.get(), size);
-  StaticJsonDocument<128> doc;
-  deserializeJson(doc, buf.get());
-
-  doc["beep"] = beepEnabled?"1":"0";
-  doc["ledEnabled"] = ledEnabled?"1":"0";
-
-  configFile.close();
-
-
-  configFile = SPIFFS.open(unit_conf, "w");
-  if (!configFile)
-  {
-    return false;
-    // Serial.println(F("Failed to open config file for writing"));
-  }
-  serializeJson(doc, configFile);
-  configFile.close();
-  return true;
+void saveUnitFeedback(bool beepEnabled, bool ledEnabled){
+  saveUnit(useFahrenheit?"fah":"cel",  supportHeatMode?"all":"nht", String(update_int/1000), login_password, String(min_temp), String(max_temp), temp_step, beep?"1":"0", ledEnabled?"1":"0");
 }
 
 // Initialize captive portal page
@@ -745,7 +715,7 @@ bool loadUnit()
   std::unique_ptr<char[]> buf(new char[size]);
 
   configFile.readBytes(buf.get(), size);
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<256> doc;
   deserializeJson(doc, buf.get());
   // unit
   String unit_tempUnit = doc["unit_tempUnit"].as<String>();
@@ -2021,6 +1991,8 @@ void hpStatusChanged(heatpumpStatus currentStatus)
     Log.ln(TAG, "Free Stack Space:\t" + String(uxTaskGetStackHighWaterMark(NULL)));
     #endif
 
+    //Update unit setting (Beep & LED to MQTT as well)
+    updateUnitSettings(); 
     lastUpdate = millis();
   }
 }
@@ -2309,7 +2281,7 @@ void haConfig()
 
   // send HA config packet
   // setup HA payload device
-  const size_t capacityClimateConfig = JSON_ARRAY_SIZE(7) + 2 * JSON_ARRAY_SIZE(6) + JSON_ARRAY_SIZE(7) + JSON_OBJECT_SIZE(25) + 2048;
+  const size_t capacityClimateConfig = JSON_ARRAY_SIZE(7) + 2 * JSON_ARRAY_SIZE(6) + JSON_ARRAY_SIZE(7) + JSON_OBJECT_SIZE(30) + 2048;
   DynamicJsonDocument haClimateConfig(capacityClimateConfig);
 
   haClimateConfig["name"] = nullptr;
@@ -2354,8 +2326,8 @@ void haConfig()
   haClimateConfig["temp_step"] = temp_step;
   haClimateConfig["pow_cmd_t"] = ha_power_set_topic;
   haClimateConfig["temperature_unit"] = useFahrenheit ? "F" : "C";
-  String curr_pwr_tpl_str = "{{ value_json.power if (value_json is defined and value_json.power is defined and value_json.power|int >= 0) else 0 }}";      // Set default value for fix "Could not parse data for HA"
-  String cur_energy_tpl_str = "{{ value_json.energy if (value_json is defined and value_json.energy is defined and value_json.energy|int >= 0) else 0 }}"; // Set default value for fix "Could not parse data for HA"
+  String curr_pwr_tpl_str = "{{ value_json.power if (value_json is defined and value_json.power is defined and value_json.power|int >= 0) else '' }}";      // Set default value for fix "Could not parse data for HA"
+  String cur_energy_tpl_str = "{{ value_json.energy if (value_json is defined and value_json.energy is defined and value_json.energy|int >= 0) else '' }}"; // Set default value for fix "Could not parse data for HA"
 
   JsonArray haConfigFan_modes = haClimateConfig.createNestedArray("fan_modes");
   haConfigFan_modes.add("AUTO");
@@ -2963,14 +2935,19 @@ void setup()
   // Mount SPIFFS filesystem
   if (SPIFFS.begin())
   {
-    Log.ln(TAG, F("Mounted file system"));
+    Log.ln(TAG, "SPIFFS Mount OK");
   }
   else
   {
-    SPIFFS.format();
+    Log.ln(TAG, "SPIFFS Mount Failed. Formatting...");
+    if(SPIFFS.format()){
+      Log.ln(TAG, "Formatting Completed");
+      SPIFFS.begin();
+    }else{
+      Log.ln(TAG, "Format Failed. The system may not work properly!");
+    }
   }
-
-#endif
+  #endif
 
   // Define hostname
   hostname += hostnamePrefix;
