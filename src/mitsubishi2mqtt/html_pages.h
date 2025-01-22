@@ -307,11 +307,27 @@ const char html_page_unit[] PROGMEM =
     "<fieldset>"
         "<legend><b>&nbsp; _TXT_UNIT_TITLE_ &nbsp;</b></legend>"
         "<form method='post'>"
+      
+            #ifdef ESP32
             "<p>"
-                "<b>_TXT_UNIT_BEEP_</b>"
+            #else
+            "<p hidden>"
+            #endif                  
+            "<b>_TXT_UNIT_BEEP_</b>"
                 "<select name='beep'>"
                     "<option value='0' _BEEP_OFF_> _TXT_F_BEEP_OFF_</option>"
                     "<option value='1' _BEEP_ON_> _TXT_F_BEEP_ON_ </option>"
+                "</select>"
+            "</p>"
+            #ifdef ESP32
+            "<p>"
+            #else
+            "<p hidden>"
+            #endif               
+                "<b>_TXT_UNIT_LED_</b>"
+                "<select name='led'>"
+                    "<option value='0' _LED_OFF_> _TXT_F_LED_OFF_</option>"
+                    "<option value='1' _LED_ON_> _TXT_F_LED_ON_ </option>"
                 "</select>"
             "</p>"
             "<p>"
