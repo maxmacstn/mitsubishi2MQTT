@@ -2385,7 +2385,7 @@ void haConfig()
   mqtt_client.endPublish();
 
   // Power sensor config
-  const size_t capacityPowerSensorConfig = JSON_OBJECT_SIZE(7) + JSON_OBJECT_SIZE(8) + 2048;
+  const size_t capacityPowerSensorConfig = JSON_OBJECT_SIZE(8) + JSON_OBJECT_SIZE(8) + 2048;
   ;
   DynamicJsonDocument haPowerSensorConfig(capacityPowerSensorConfig);
   haPowerSensorConfig["name"] = "Power";
@@ -2395,6 +2395,7 @@ void haConfig()
   haPowerSensorConfig["device_class"] = "power";
   haPowerSensorConfig["state_topic"] = ha_state_topic;
   haPowerSensorConfig["value_template"] = curr_pwr_tpl_str;
+  haPowerSensorConfig["state_class"] = "measurement";
 
   addMQTTDeviceInfo(&haPowerSensorConfig);
 
