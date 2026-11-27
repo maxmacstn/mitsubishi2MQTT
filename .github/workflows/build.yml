@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [esp07, esp12e, wifikit-serial-esp32-s3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/libdeps
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Build ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
+      - name: Merge and check ESP32-S3 image
+        if: matrix.env == 'wifikit-serial-esp32-s3'
+        run: |
+          pip install esptool
+          SKIP_BUILD=1 "bin release/merge_command.sh"
+          esptool.py --chip esp32s3 image_info bin\ release/*_merged.bin || \
+            esptool --chip esp32s3 image_info bin\ release/*_merged.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: |
+            .pio/build/${{ matrix.env }}/firmware.bin
+            bin release/*.bin
+          if-no-files-found: ignore
+
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Fetch libraries
+        run: pio pkg install -e esp07
+      - name: Run host stability tests (ASan + UBSan)
+        run: CXX=clang++ test/run_host_tests.sh

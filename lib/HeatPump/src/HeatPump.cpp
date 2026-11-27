@@ -164,6 +164,18 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx)
   {
     _HardSerial = serial;
   }
+  // Remember custom UART pins so that the 9600 bps fallback and
+  // connect(NULL) reconnects from sync() keep using them.
+  if (rx >= 0 && tx >= 0)
+  {
+    rxPin = rx;
+    txPin = tx;
+  }
+  else
+  {
+    rx = rxPin;
+    tx = txPin;
+  }
   bool retry = false;
   if (bitrate == 0)
   {
@@ -204,11 +216,9 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx)
   
   if (packetType != RCVD_PKT_CONNECT_SUCCESS && bitrate == 2400)
   {
-    return connect(serial, 9600);
+    return connect(serial, 9600, rx, tx);
   }
   return packetType == RCVD_PKT_CONNECT_SUCCESS;
-
-  
 }
 
 #endif
@@ -574,27 +584,31 @@ void HeatPump::setRoomTempChangedCallback(ROOM_TEMP_CHANGED_CALLBACK_SIGNATURE)
 // #### WARNING, THE FOLLOWING METHOD CAN F--K YOUR HP UP, USE WISELY ####
 void HeatPump::sendCustomPacket(byte data[], int packetLength)
 {
+  if (data == NULL || packetLength <= 0)
+  {
+    return;
+  }
+
   while (!canSend(false))
   {
     delay(10);
   }
 
-  packetLength += 2;                                                      // +2 for first header byte and checksum
-  packetLength = (packetLength > PACKET_LEN) ? PACKET_LEN : packetLength; // ensure we are not exceeding PACKET_LEN
-  byte packet[packetLength];
-  packet[0] = HEADER[0]; // add first header byte
+  // Layout: [HEADER[0]] [payload ...] [checksum]. The payload may be at most
+  // PACKET_LEN - 2 bytes; anything longer is truncated.
+  const int maxPayload = PACKET_LEN - 2;
+  int payloadLength = (packetLength > maxPayload) ? maxPayload : packetLength;
+  int totalLength = payloadLength + 2;
 
-  // add data
-  for (int i = 0; i < packetLength; i++)
+  byte packet[PACKET_LEN] = {};
+  packet[0] = HEADER[0];
+  for (int i = 0; i < payloadLength; i++)
   {
-    packet[(i + 1)] = data[i];
+    packet[i + 1] = data[i];
   }
+  packet[totalLength - 1] = checkSum(packet, totalLength - 1);
 
-  // add checksum
-  byte chkSum = checkSum(packet, (packetLength - 1));
-  packet[(packetLength - 1)] = chkSum;
-
-  writePacket(packet, packetLength);
+  writePacket(packet, totalLength);
 }
 
 // Private Methods //////////////////////////////////////////////////////////////
@@ -1094,6 +1108,7 @@ int HeatPump::readPacket(bool waitForPacket)
         {
           currentStatus.operating = receivedStatus.operating;
           currentStatus.compressorFrequency = receivedStatus.compressorFrequency;
+          currentStatus.power = receivedStatus.power;
           statusChangedCallback(currentStatus);
         }
         else

@@ -16,7 +16,7 @@
 
 //#define MY_LANGUAGE fr-FR // define your language
 
-const PROGMEM char* m2mqtt_version = "magi's edition (2025.1.0)";
+const PROGMEM char* m2mqtt_version = "magi's edition (2025.1.1)";
 
 //Define global variables for files
 #ifdef ESP32
@@ -124,7 +124,7 @@ bool _debugMode = false;
 // sketch settings
 const PROGMEM uint32_t SEND_ROOM_TEMP_INTERVAL_MS = 15000; // 15 seconds (anything less than 45 seconds may cause problems, but it's faster.)
 const PROGMEM uint32_t POLL_DELAY_AFTER_SET_MS = 35000; // After send command, wait at least 35 seconds for A/C to update status.
-const PROGMEM uint32_t MQTT_RETRY_INTERVAL_MS = 1000; // 1 seconds
+const PROGMEM uint32_t MQTT_RETRY_INTERVAL_MS = 5000; // 5 seconds between single, non-blocking reconnect attempts
 const PROGMEM uint32_t HP_RETRY_INTERVAL_MS = 1000; // 1 seconds
 const PROGMEM uint32_t HP_MAX_RETRIES = 10; // Double the interval between retries up to this many times, then keep retrying forever at that maximum interval.
 // Default values give a final retry interval of 1000ms * 2^10, which is 1024 seconds, about 17 minutes. 

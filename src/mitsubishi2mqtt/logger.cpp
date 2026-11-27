@@ -1,101 +1,110 @@
 #include "logger.h"
 
+#include <stdio.h>
+#include <string.h>
 
 Logging &Logging::getInstance() {
-  static Logging instance ;
-  return instance   ;
+  static Logging instance;
+  return instance;
 }
 
-void Logging:: storeLog(char *log, size_t size){
-    // return;
+void Logging::storeLog(const char *log, size_t size) {
+  if (log == NULL || size == 0)
+    return;
 
-    if (size > 512)
-        size = 512;
+  if (size > LOG_LINE_MAX)
+    size = LOG_LINE_MAX;
 
+  // Make room: drop whole lines from the front until the new data fits.
+  if (logBuffSize + size > LOG_SIZE) {
+    size_t needed = logBuffSize + size - LOG_SIZE;
+    // Drop at least LOG_LINE_MAX bytes at a time so we do not memmove on every line.
+    size_t drop = needed < LOG_LINE_MAX ? LOG_LINE_MAX : needed;
+    if (drop > logBuffSize)
+      drop = logBuffSize;
+    // Extend to the end of the line so the buffer always starts at a line boundary.
+    while (drop > 0 && drop < logBuffSize && logBuffPTR[drop - 1] != '\n')
+      drop++;
+    memmove(logBuffPTR, logBuffPTR + drop, logBuffSize - drop);
+    logBuffSize -= drop;
+  }
 
-    memcpy(logBuffPTR + logBuffSize , log, sizeof(char) * size );
-
-    logBuffSize += size;
-    
-
-    //Rotate log if buffer full
-    if (logBuffSize + 512 >= LOG_SIZE){
-        // Serial.println("rotate buff");
-        memmove(logBuffPTR, &logBuffPTR[512], logBuffSize);
-        // memmove(logBuffPTR, logBuffPTR +512, logBuffSize);
-        logBuffSize -= 512;
-    }
-
-
+  memcpy(logBuffPTR + logBuffSize, log, size);
+  logBuffSize += size;
 }
 
+void Logging::writeLine(const char *tag, const char *message, bool newline) {
+  char buff[LOG_LINE_MAX];
+  int prefix = snprintf(buff, sizeof(buff), "[%s:%08lu]\t", tag ? tag : "", (unsigned long)(millis() / 1000));
+  if (prefix < 0)
+    return;
+  size_t size = (size_t)prefix < sizeof(buff) ? (size_t)prefix : sizeof(buff) - 1;
 
-void Logging:: f(const char* tag, char *format, ...){
-    va_list args;
-    char buff[512];
-    int size = 0 ;
+  // Reserve one byte for the optional newline.
+  size_t room = sizeof(buff) - 1 - size;
+  size_t msgLen = message ? strlen(message) : 0;
+  if (msgLen > room)
+    msgLen = room;
+  if (msgLen)
+    memcpy(buff + size, message, msgLen);
+  size += msgLen;
 
-    va_start(args, format);
-    size += sprintf(buff, "[%s:%08d]\t",tag, millis()/1000);
-    size += vsnprintf(&buff[size], 512, format, args);
+  if (newline && (size == 0 || buff[size - 1] != '\n'))
+    buff[size++] = '\n';
 
-    #ifdef ESP32
-        //Log to USB-CDC of ESP32-S3
-        for (int i =0 ;  i < size; i++){
-            Serial.print(buff[i]);
-        }
-    #else
-        //Other logging output here.
-    #endif
-    
+#ifdef ESP32
+  Serial.write((const uint8_t *)buff, size);
+#endif
 
-    this->storeLog(buff, size);
+  storeLog(buff, size);
 }
 
-void Logging::  f(const char* tag, const char *format, ...){
-    this->f(tag, (char*) format);
+void Logging::vwrite(const char *tag, bool newline, const char *format, va_list args) {
+  char msg[LOG_LINE_MAX];
+  int n = vsnprintf(msg, sizeof(msg), format ? format : "", args);
+  if (n < 0)
+    return;
+  writeLine(tag, msg, newline); // vsnprintf always NUL-terminates within sizeof(msg)
 }
 
-void Logging:: f(const char* tag,  String string){
-    this->f(tag, string.c_str());
+void Logging::f(const char *tag, const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vwrite(tag, false, format, args);
+  va_end(args);
 }
 
-void Logging::  ln(const char* tag, String string){
-    string += "\n";
-    this->f(tag, string.c_str());
+void Logging::f(const char *tag, const String &string) {
+  writeLine(tag, string.c_str(), false);
 }
 
-void Logging:: ln(const char* tag, const char *format, ...){
-
-    va_list args;
-    char buff[512];
-    int size = 0 ;
-
-    va_start(args, format);
-    size += sprintf(buff, "[%s:%08d]\t",tag, millis()/1000);
-    size += vsnprintf(&buff[size], 512, format, args);
-    buff[size] = '\n';
-    size++;
-
-    #ifdef ESP32
-        //Log to USB-CDC of ESP32-S3
-        for (int i =0 ;  i < size; i++){
-            Serial.print(buff[i]);
-        }
-    #else
-        //Other logging output here.
-    #endif
-
-    this->storeLog(buff, size);
+void Logging::ln(const char *tag, const String &string) {
+  writeLine(tag, string.c_str(), true);
 }
 
-String Logging::getLogs(){
-    String logs = "";
+void Logging::ln(const char *tag, const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vwrite(tag, true, format, args);
+  va_end(args);
+}
 
-    for (int i = 0; i < logBuffSize; i++){
-        logs += (logBuffPTR)[i];
-    }
-    return logs;
+String Logging::getLogs() {
+  String logs;
+  logs.reserve(logBuffSize + 1);
+  // Copy in chunks through a NUL-terminated scratch buffer.
+  char chunk[129];
+  size_t pos = 0;
+  while (pos < logBuffSize) {
+    size_t n = logBuffSize - pos;
+    if (n > sizeof(chunk) - 1)
+      n = sizeof(chunk) - 1;
+    memcpy(chunk, logBuffPTR + pos, n);
+    chunk[n] = '\0';
+    logs += chunk;
+    pos += n;
+  }
+  return logs;
 }
 
 Logging &Log = Log.getInstance();
