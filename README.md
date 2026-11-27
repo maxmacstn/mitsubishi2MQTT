@@ -31,7 +31,7 @@ How to use:
  - Step 7: (optional): Set Login password to prevent unwanted access in SETUP->ADVANCE->Login Password
 
 ***
-Upgrading from 2025.1.0 (stability and security update):
+Upgrading from 2025.1.0 to 2025.1.1 (stability and security update):
  - Existing settings are kept. Config files stay on SPIFFS with the same names; saves are now atomic (`.tmp`, previous version kept as `.bak`).
  - Web login uses a random session token (1 hour inactivity timeout). Everyone is logged out after the update or a reboot.
  - Passwords are never shown in the web pages. Leave `********` in a password field to keep the stored value.
