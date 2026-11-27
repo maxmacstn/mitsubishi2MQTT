@@ -284,10 +284,16 @@ LoadSource loadJsonWithBackup(FSType &fs, const char *path, JsonDocument &doc)
 // Energy
 // ---------------------------------------------------------------------------
 
-// kWh consumed at `powerW` watts over `elapsedMs` milliseconds.
+// Upper bound for a plausible reading. Residential Mitsubishi units draw a
+// few kW; anything above this is treated as a corrupted CN105 packet.
+static const int MAX_PLAUSIBLE_POWER_W = 25000;
+
+// kWh consumed at `powerW` watts over `elapsedMs` milliseconds. Negative or
+// implausibly large readings count as zero so one bad packet cannot make the
+// energy counter jump.
 inline float energyIncrementKWh(int powerW, unsigned long elapsedMs)
 {
-  if (powerW <= 0)
+  if (powerW <= 0 || powerW > MAX_PLAUSIBLE_POWER_W)
   {
     return 0.0f;
   }

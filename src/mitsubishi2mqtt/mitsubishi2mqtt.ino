@@ -428,7 +428,9 @@ bool loadWifi()
   ap_ssid = m2m::readJsonStringOrDefault(doc["ap_ssid"], "");
   ap_pwd = m2m::readJsonStringOrDefault(doc["ap_pwd"], "");
   ota_pwd = m2m::readJsonStringOrDefault(doc["ota_pwd"], "");
-  return true;
+  // A saved config with an empty SSID is not a usable Wi-Fi config: treat it
+  // as missing so loop() does not reboot the AP-mode device every 5 minutes.
+  return !ap_ssid.isEmpty();
 }
 
 void playBeep(Buzzer_preset buzzer_p)

@@ -184,7 +184,7 @@ const char html_page_wifi[] PROGMEM =
                 "<br/>"
                 "<input id='otapwd' "
                 "autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' "
-                "name='otapwd' placeholder=' ' value='_OTA_PWD_'>"
+                "type='password' name='otapwd' placeholder=' ' value='_OTA_PWD_'>"
             "</p>"
             "<br/>"
             "<button name='save' type='submit' class='button bgrn'>_TXT_SAVE_</button>"

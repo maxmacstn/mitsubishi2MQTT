@@ -569,6 +569,9 @@ static void test_energy_accumulation_and_reset()
   // 15.9 s at 2 kW: fractional seconds are kept.
   CHECK(fabsf(m2m::energyIncrementKWh(2000, 15900UL) - (2000.0f * 15.9f / 3600.0f / 1000.0f)) < 1e-7f);
   CHECK(m2m::energyIncrementKWh(-5, 1000) == 0.0f);
+  // Corrupted CN105 readings (e.g. 0xFFFF = 65535 W) are ignored.
+  CHECK(m2m::energyIncrementKWh(65535, 3600000UL) == 0.0f);
+  CHECK(m2m::energyIncrementKWh(m2m::MAX_PLAUSIBLE_POWER_W, 3600000UL) > 0.0f);
 
   const unsigned long interval = 10 * 60000UL;
   // Normal growth.

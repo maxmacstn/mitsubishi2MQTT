@@ -44,11 +44,11 @@ function check(){
         </p>
         <p><b>_TXT_INIT_PSK_</b> ()
             <br/>
-            <input id='psk' name='psk' placeholder=' '>
+            <input id='psk' type='password' name='psk' placeholder=' '>
         </p>
         <p><b>_TXT_INIT_OTA_</b>
             <br/>
-            <input id='otapwd' name='otapwd' placeholder=' '>
+            <input id='otapwd' type='password' name='otapwd' placeholder=' '>
         </p>
         </p>
         <br/>
