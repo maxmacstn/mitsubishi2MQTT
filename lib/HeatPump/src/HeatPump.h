@@ -211,6 +211,10 @@ class HeatPump
 
     heatpumpFunctions functions;
   
+    // UART pins used for the last successful connect() (-1 = board default)
+    int rxPin {-1};
+    int txPin {-1};
+
     #if defined(__WIFIKITSAMD__)
     Uart * _HardSerial {nullptr};
     #else

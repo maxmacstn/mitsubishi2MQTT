@@ -41,7 +41,7 @@ const char html_menu_root[] PROGMEM = R"====(
     </form>
 </div>
 <div>
-    <form>
+    <form method='post'>
         <button type='submit' name='REBOOT' class='button bred'>_TXT_REBOOT_</button>
     </form>
 </div>
@@ -83,7 +83,7 @@ const char html_menu_setup[] PROGMEM = R"====(
     </form>
 </p>
 <p>
-    <form onsubmit="return confirm(' _TXT_RESETCONFIRM_ ');">
+    <form method='post' onsubmit="return confirm(' _TXT_RESETCONFIRM_ ');">
         <button type='submit' name='RESET' class='button bred'>_TXT_RESET_</button>
     </form>
 </p>
